@@ -1,0 +1,17 @@
+{
+  "name": "tech-know-logic-timer-app",
+  "version": "1.0.0",
+  "description": "Multi-team countdown timer and time logging system for Tech Know Logic event",
+  "scripts": {
+    "dev": "npx serve . -l 3000",
+    "start": "npx serve ."
+  },
+  "keywords": [
+    "timer",
+    "countdown",
+    "event",
+    "competition"
+  ],
+  "author": "",
+  "license": "MIT"
+}

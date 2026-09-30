@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tech Know Logic — Multi-Team Competition Timer</title>
+  <meta name="description" content="High-precision multi-team countdown timer and leaderboard for the Tech Know Logic competition. Concurrent independent team timers with tie-breaker leaderboard.">
+  
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@500;700;800&display=swap" rel="stylesheet">
+  
+  <!-- FontAwesome Icons for crisp UI -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- Background Glow & Grid -->
+  <div class="bg-glow bg-glow-1"></div>
+  <div class="bg-glow bg-glow-2"></div>
+  <div class="grid-overlay"></div>
+
+  <!-- Main Container -->
+  <div class="app-layout">
+    
+    <!-- Top Header -->
+    <header class="app-header">
+      <div class="brand-section">
+        <div class="brand-badge">
+          <i class="fa-solid fa-bolt-lightning pulse-icon"></i>
+          <span>EVENT TIMER HUB</span>
+        </div>
+        <h1 class="brand-title">TECH KNOW LOGIC</h1>
+        <p class="brand-subtitle">Concurrent Multi-Team Countdown &amp; Exact Time Logging System</p>
+      </div>
+
+      <div class="header-stats">
+        <div class="stat-pill">
+          <span class="stat-label">TOTAL TEAMS</span>
+          <span class="stat-value" id="stat-total">0</span>
+        </div>
+        <div class="stat-pill active-stat">
+          <span class="stat-label"><i class="fa-solid fa-circle-dot live-indicator"></i> RUNNING</span>
+          <span class="stat-value" id="stat-running">0</span>
+        </div>
+        <div class="stat-pill finished-stat">
+          <span class="stat-label">FINISHED</span>
+          <span class="stat-value" id="stat-finished">0</span>
+        </div>
+        <div class="stat-pill clock-stat">
+          <span class="stat-label">CURRENT TIME</span>
+          <span class="stat-value font-mono" id="header-clock">--:--:--</span>
+        </div>
+      </div>
+
+      <div class="header-controls">
+        <button id="toggle-sound-btn" class="icon-toggle-btn active" title="Audio Alarm Toggle">
+          <i class="fa-solid fa-volume-high"></i>
+          <span class="btn-text">Sound: ON</span>
+        </button>
+        <button id="toggle-speech-btn" class="icon-toggle-btn active" title="Voice Announcement Toggle">
+          <i class="fa-solid fa-bullhorn"></i>
+          <span class="btn-text">Voice: ON</span>
+        </button>
+        <button id="export-btn" class="action-btn secondary" title="Export Results to CSV">
+          <i class="fa-solid fa-file-csv"></i> Export CSV
+        </button>
+      </div>
+    </header>
+
+    <!-- Notification Toast Banner Container -->
+    <div id="toast-container" class="toast-container"></div>
+
+    <!-- Main Content Area -->
+    <main class="main-content">
+      
+      <!-- Team Registration Panel -->
+      <section class="registration-panel">
+        <div class="panel-header">
+          <div class="panel-title-wrap">
+            <i class="fa-solid fa-user-plus panel-icon"></i>
+            <h2>Register New Team</h2>
+          </div>
+          <span class="panel-hint">Individual independent timer starts when requested</span>
+        </div>
+
+        <form id="team-form" class="registration-form">
+          <div class="form-group">
+            <label for="team-name">Team Name <span class="required">*</span></label>
+            <div class="input-with-icon">
+              <i class="fa-solid fa-users"></i>
+              <input type="text" id="team-name" placeholder="e.g. Cyber Ninjas, Team Alpha" required autocomplete="off">
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label for="participant-names">Participant Name(s) <span class="required">*</span></label>
+            <div class="input-with-icon">
+              <i class="fa-solid fa-id-card"></i>
+              <input type="text" id="participant-names" placeholder="e.g. John Doe, Sarah Smith" required autocomplete="off">
+            </div>
+          </div>
+
+          <div class="form-group timer-duration-group">
+            <label for="duration-mins">Countdown Duration</label>
+            <div class="duration-controls">
+              <div class="input-with-icon duration-input-wrap">
+                <i class="fa-solid fa-stopwatch"></i>
+                <input type="number" id="duration-mins" value="12" min="1" max="180" required>
+                <span class="unit">Minutes</span>
+              </div>
+              <div class="preset-pills">
+                <button type="button" class="preset-pill" data-min="5">5m</button>
+                <button type="button" class="preset-pill" data-min="10">10m</button>
+                <button type="button" class="preset-pill active" data-min="12">12m (Default)</button>
+                <button type="button" class="preset-pill" data-min="15">15m</button>
+                <button type="button" class="preset-pill" data-min="20">20m</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="form-actions">
+            <button type="submit" name="action" value="start_now" class="action-btn primary-glow">
+              <i class="fa-solid fa-play"></i> Register & Start Timer Now
+            </button>
+            <button type="submit" name="action" value="register_only" class="action-btn outline">
+              <i class="fa-solid fa-plus"></i> Add to Waiting List
+            </button>
+          </div>
+        </form>
+      </section>
+
+      <!-- Navigation Tabs & Toolbar -->
+      <section class="toolbar-section">
+        <div class="tabs-group">
+          <button class="tab-btn active" data-tab="active-tab">
+            <i class="fa-solid fa-clock"></i>
+            <span>Active &amp; Waiting Timers</span>
+            <span class="tab-badge" id="active-badge">0</span>
+          </button>
+          <button class="tab-btn" data-tab="logs-tab">
+            <i class="fa-solid fa-list-check"></i>
+            <span>Event Time Logs</span>
+            <span class="tab-badge" id="logs-badge">0</span>
+          </button>
+        </div>
+
+        <div class="tools-group">
+          <div class="search-wrap">
+            <i class="fa-solid fa-magnifying-glass"></i>
+            <input type="text" id="search-teams" placeholder="Search team or participant...">
+          </div>
+          <div class="filter-select-wrap">
+            <select id="status-filter">
+              <option value="all">All Statuses</option>
+              <option value="running">Running</option>
+              <option value="paused">Paused</option>
+              <option value="completed">Completed / Stopped Early</option>
+              <option value="time_over">Time Over</option>
+              <option value="ready">Ready (Not Started)</option>
+            </select>
+          </div>
+          <button id="add-samples-btn" class="action-btn ghost" title="Populate demo teams">
+            <i class="fa-solid fa-flask"></i> Demo Data
+          </button>
+          <button id="clear-all-btn" class="action-btn danger-ghost" title="Reset all data">
+            <i class="fa-solid fa-trash-can"></i> Clear All
+          </button>
+        </div>
+      </section>
+
+      <!-- Tab 1: Timers View (Row-wise List) -->
+      <section id="active-tab" class="tab-content active">
+        <div id="teams-list" class="teams-list">
+          <!-- Dynamically populated row-wise team rectangles -->
+        </div>
+        <div id="empty-state" class="empty-state">
+          <div class="empty-icon-wrap">
+            <i class="fa-solid fa-stopwatch-20"></i>
+          </div>
+          <h3>No Teams Registered Yet</h3>
+          <p>Register a team using the form above to start their countdown timer!</p>
+        </div>
+      </section>
+
+      <!-- Tab 2: Event Time Logs & Records -->
+      <section id="logs-tab" class="tab-content">
+        <div class="logs-card">
+          <div class="logs-header">
+            <div>
+              <h2><i class="fa-solid fa-clipboard-list"></i> Recorded Team Times &amp; Logs</h2>
+              <p class="logs-desc">
+                Official time log of all participating teams. Displays exact completion times and elapsed durations.
+              </p>
+            </div>
+            <div class="logs-actions">
+              <button id="print-logs-btn" class="action-btn secondary">
+                <i class="fa-solid fa-print"></i> Print Logs
+              </button>
+            </div>
+          </div>
+
+          <div class="table-responsive">
+            <table class="logs-table" id="logs-table">
+              <thead>
+                <tr>
+                  <th style="width: 60px;">#</th>
+                  <th>Team Name</th>
+                  <th>Participants</th>
+                  <th>Time Taken (Elapsed)</th>
+                  <th>Time Remaining</th>
+                  <th>Target Limit</th>
+                  <th>Status</th>
+                  <th>Started At</th>
+                  <th>Finished At</th>
+                </tr>
+              </thead>
+              <tbody id="logs-tbody">
+                <!-- Dynamically populated rows -->
+              </tbody>
+            </table>
+          </div>
+          <div id="empty-logs" class="empty-state small">
+            <p>No teams logged yet.</p>
+          </div>
+        </div>
+      </section>
+
+    </main>
+
+    <!-- Footer -->
+    <footer class="app-footer">
+      <span>Tech Know Logic &bull; Event Multi-Team Timer</span>
+      <span class="footer-note"><i class="fa-solid fa-shield-halved"></i> Timers run independently &amp; auto-save to browser storage</span>
+    </footer>
+  </div>
+
+  <!-- Modal for Time Over Alert Notification -->
+  <div id="alert-modal" class="modal-overlay">
+    <div class="modal-card">
+      <div class="modal-alarm-icon">
+        <i class="fa-solid fa-bell shake-animation"></i>
+      </div>
+      <h2 class="modal-title">TIME IS OVER!</h2>
+      <div class="modal-team-highlight" id="modal-team-name">Team Alpha</div>
+      <p class="modal-subtext" id="modal-participants">Participants: John, Jane</p>
+      <div class="modal-stats">
+        <div class="modal-stat-box">
+          <span class="m-label">Countdown Limit</span>
+          <span class="m-val" id="modal-duration">12m 00s</span>
+        </div>
+        <div class="modal-stat-box">
+          <span class="m-label">Time Taken</span>
+          <span class="m-val" id="modal-elapsed">12m 00s</span>
+        </div>
+      </div>
+      <button id="modal-close-btn" class="action-btn primary large-btn">
+        <i class="fa-solid fa-check"></i> Acknowledge &amp; Stop Alarm
+      </button>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
