@@ -185,19 +185,25 @@
         </div>
       </section>
 
-      <!-- Tab 2: Event Time Logs & Records -->
+      <!-- Tab 2: Event Time Logs & Records (Permanent Storage) -->
       <section id="logs-tab" class="tab-content">
         <div class="logs-card">
           <div class="logs-header">
             <div>
-              <h2><i class="fa-solid fa-clipboard-list"></i> Recorded Team Times &amp; Logs</h2>
+              <h2><i class="fa-solid fa-clipboard-list"></i> Permanent Event Time Logs &amp; History</h2>
               <p class="logs-desc">
-                Official time log of all participating teams. Displays exact completion times and elapsed durations.
+                Permanent time record for all teams. Even if a timer is deleted from the active screen, its completion and elapsed time remain saved here forever.
               </p>
             </div>
             <div class="logs-actions">
+              <button id="export-logs-btn" class="action-btn secondary">
+                <i class="fa-solid fa-file-csv"></i> Export CSV
+              </button>
               <button id="print-logs-btn" class="action-btn secondary">
                 <i class="fa-solid fa-print"></i> Print Logs
+              </button>
+              <button id="clear-logs-btn" class="action-btn danger-ghost" title="Clear permanent logs history">
+                <i class="fa-solid fa-trash-can"></i> Clear History
               </button>
             </div>
           </div>

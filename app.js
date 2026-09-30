@@ -1,22 +1,25 @@
 /**
- * Tech Know Logic — Multi-Team Concurrent Timer & Time Logs
+ * Tech Know Logic — Multi-Team Concurrent Timer & Permanent Event Time Logs
  * Independent precise timers, row-wise horizontal layout, audio alarm beeps,
- * early completion logging, and full event time records (without scores/ranking).
+ * early completion logging, and PERMANENT history logs (timers deleted from active
+ * screen are preserved forever in Event Time Logs).
  */
 
 // ============================================================================
-// State & Storage
+// State & Storage Keys
 // ============================================================================
-const STORAGE_KEY = 'tech_know_logic_teams_v2';
-const SETTINGS_KEY = 'tech_know_logic_settings_v2';
+const ACTIVE_TEAMS_KEY = 'tech_know_logic_active_teams_v3';
+const PERMANENT_LOGS_KEY = 'tech_know_logic_permanent_logs_v3';
+const SETTINGS_KEY = 'tech_know_logic_settings_v3';
 
-let teams = [];
+let teams = [];       // Active / Waiting screen timers
+let eventLogs = [];   // Permanent history logs (never lost when active timers are deleted)
 let settings = {
   soundEnabled: true,
   speechEnabled: true
 };
 
-// Global audio context for synthesizing alarm sound without external files
+// Audio synthesis
 let audioCtx = null;
 let currentAlarmInterval = null;
 let activeAlarmOscillators = [];
@@ -45,7 +48,6 @@ function playAlarmSound() {
     initAudio();
     if (!audioCtx) return;
 
-    // Stop any currently playing alarm first
     stopAlarmSound();
 
     let beepCount = 0;
@@ -59,7 +61,6 @@ function playAlarmSound() {
         const osc = audioCtx.createOscillator();
         const gainNode = audioCtx.createGain();
 
-        // Alternating high urgent frequencies (1200Hz & 950Hz)
         osc.type = 'square';
         osc.frequency.setValueAtTime(idx % 2 === 0 ? 1200 : 950, now + offset);
 
@@ -76,17 +77,13 @@ function playAlarmSound() {
       });
 
       beepCount++;
-      // Stop automatically after 8 bursts (about 6 seconds) if not acknowledged
       if (beepCount >= 8) {
         clearInterval(currentAlarmInterval);
         currentAlarmInterval = null;
       }
     }
 
-    // Immediately play first burst
     triggerBeepBurst();
-
-    // Repeat every 750ms
     currentAlarmInterval = setInterval(triggerBeepBurst, 750);
   } catch (err) {
     console.warn('Audio playback error:', err);
@@ -117,9 +114,9 @@ function playChimeSound(type = 'click') {
     osc.type = 'sine';
 
     if (type === 'success') {
-      osc.frequency.setValueAtTime(523.25, now); // C5
-      osc.frequency.exponentialRampToValueAtTime(659.25, now + 0.1); // E5
-      osc.frequency.exponentialRampToValueAtTime(783.99, now + 0.22); // G5
+      osc.frequency.setValueAtTime(523.25, now);
+      osc.frequency.exponentialRampToValueAtTime(659.25, now + 0.1);
+      osc.frequency.exponentialRampToValueAtTime(783.99, now + 0.22);
       gainNode.gain.setValueAtTime(0.2, now);
       gainNode.gain.exponentialRampToValueAtTime(0.001, now + 0.45);
       osc.start(now);
@@ -184,14 +181,20 @@ function formatClockTime(date) {
 }
 
 // ============================================================================
-// Data Persistence
+// Data Persistence (Separate Active Timers vs. Permanent Logs)
 // ============================================================================
 function loadData() {
   try {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) {
-      teams = JSON.parse(saved);
+    const savedActive = localStorage.getItem(ACTIVE_TEAMS_KEY);
+    if (savedActive) {
+      teams = JSON.parse(savedActive);
     }
+
+    const savedLogs = localStorage.getItem(PERMANENT_LOGS_KEY);
+    if (savedLogs) {
+      eventLogs = JSON.parse(savedLogs);
+    }
+
     const savedSettings = localStorage.getItem(SETTINGS_KEY);
     if (savedSettings) {
       settings = { ...settings, ...JSON.parse(savedSettings) };
@@ -203,10 +206,53 @@ function loadData() {
 
 function saveData() {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(teams));
+    localStorage.setItem(ACTIVE_TEAMS_KEY, JSON.stringify(teams));
+    localStorage.setItem(PERMANENT_LOGS_KEY, JSON.stringify(eventLogs));
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
   } catch (e) {
     console.error('Failed to save to local storage:', e);
+  }
+}
+
+// ============================================================================
+// Permanent History Synchronization
+// ============================================================================
+/**
+ * Keeps the permanent event time log synchronized with the team's progress.
+ * If the team is ever deleted from the active screen, this log entry remains saved.
+ */
+function syncTeamToPermanentLog(team) {
+  const timing = getTeamTiming(team);
+  const timeTaken = team.elapsedAtStop != null ? team.elapsedAtStop : timing.elapsedMs;
+  const timeLeft = timing.remainingMs;
+
+  let existingLog = eventLogs.find(l => l.teamId === team.id);
+
+  if (existingLog) {
+    existingLog.teamName = team.teamName;
+    existingLog.participants = team.participants;
+    existingLog.targetDurationMs = team.targetDurationMs;
+    existingLog.timeTakenMs = timeTaken;
+    existingLog.timeLeftMs = timeLeft;
+    existingLog.status = team.status;
+    existingLog.startedAt = team.startTime || existingLog.startedAt;
+    existingLog.finishedAt = team.finishedAt || existingLog.finishedAt;
+    existingLog.updatedAt = Date.now();
+  } else {
+    eventLogs.push({
+      logId: 'log_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
+      teamId: team.id,
+      teamName: team.teamName,
+      participants: team.participants,
+      targetDurationMs: team.targetDurationMs,
+      timeTakenMs: timeTaken,
+      timeLeftMs: timeLeft,
+      status: team.status,
+      startedAt: team.startTime,
+      finishedAt: team.finishedAt,
+      registeredAt: team.createdAt || Date.now(),
+      updatedAt: Date.now()
+    });
   }
 }
 
@@ -269,12 +315,14 @@ function tickTimers() {
     if (team.status === 'running') {
       const timing = getTeamTiming(team);
 
-      // Check if time has run out
+      // Check if time has run out (00:00)
       if (timing.remainingMs <= 0) {
         team.status = 'time_over';
         team.elapsedAtStop = team.targetDurationMs;
         team.finishedAt = Date.now();
         stateChanged = true;
+
+        syncTeamToPermanentLog(team);
 
         if (!team.alerted) {
           team.alerted = true;
@@ -371,6 +419,7 @@ function startTeamTimer(teamId) {
     playChimeSound('click');
   }
 
+  syncTeamToPermanentLog(team);
   saveData();
   renderAll();
 }
@@ -385,13 +434,13 @@ function pauseTeamTimer(teamId) {
   showToast(`Timer paused for "${team.teamName}"`, 'warning', '⏸️');
   playChimeSound('click');
 
+  syncTeamToPermanentLog(team);
   saveData();
   renderAll();
 }
 
 /**
- * Stop and Record: When a team finishes early (e.g. 2 mins before),
- * records the exact elapsed time and logs it directly.
+ * Stop and Record: When a team finishes early, records exact time and logs it permanently.
  */
 function stopAndRecordTeam(teamId) {
   initAudio();
@@ -404,15 +453,16 @@ function stopAndRecordTeam(teamId) {
   team.finishedAt = Date.now();
   team.pausedAt = null;
 
+  syncTeamToPermanentLog(team);
   playChimeSound('success');
-  showToast(`Team "${team.teamName}" stopped! Time taken: ${formatDetailedDuration(team.elapsedAtStop)} logged.`, 'success', '🏁');
+  showToast(`Team "${team.teamName}" stopped! Time taken: ${formatDetailedDuration(team.elapsedAtStop)} logged permanently.`, 'success', '🏁');
 
   saveData();
   renderAll();
 }
 
 function resetTeamTimer(teamId) {
-  if (!confirm('Are you sure you want to reset this team\'s timer?')) return;
+  if (!confirm('Are you sure you want to restart this active timer?')) return;
   const team = teams.find(t => t.id === teamId);
   if (!team) return;
 
@@ -424,6 +474,7 @@ function resetTeamTimer(teamId) {
   team.finishedAt = null;
   team.alerted = false;
 
+  syncTeamToPermanentLog(team);
   showToast(`Timer reset for "${team.teamName}"`, 'info', '🔄');
   saveData();
   renderAll();
@@ -434,7 +485,7 @@ function adjustTeamDuration(teamId, deltaMinutes) {
   if (!team) return;
 
   const deltaMs = deltaMinutes * 60 * 1000;
-  const newTarget = Math.max(60000, team.targetDurationMs + deltaMs); // minimum 1 min
+  const newTarget = Math.max(60000, team.targetDurationMs + deltaMs);
   team.targetDurationMs = newTarget;
 
   if (team.status === 'time_over' && deltaMinutes > 0) {
@@ -445,24 +496,39 @@ function adjustTeamDuration(teamId, deltaMinutes) {
     }
   }
 
+  syncTeamToPermanentLog(team);
   showToast(`Adjusted ${deltaMinutes > 0 ? '+' : ''}${deltaMinutes}m for "${team.teamName}"`, 'info', '⏳');
   saveData();
   renderAll();
 }
 
+/**
+ * CRUCIAL: Deleting a timer from the Active / Waiting screen
+ * ONLY removes it from the active screen!
+ * Its record in the Event Time Logs is preserved permanently as history.
+ */
 function deleteTeam(teamId) {
   const team = teams.find(t => t.id === teamId);
   if (!team) return;
-  if (!confirm(`Delete team "${team.teamName}"? This action cannot be undone.`)) return;
 
+  if (!confirm(`Remove "${team.teamName}" from Active Timers screen?\n\nNote: The team's recorded time and history will REMAIN permanently saved in "Event Time Logs".`)) {
+    return;
+  }
+
+  // Ensure latest state is locked in the permanent log before removing from active list
+  syncTeamToPermanentLog(team);
+
+  // Remove ONLY from active teams array
   teams = teams.filter(t => t.id !== teamId);
-  showToast(`Deleted team "${team.teamName}"`, 'info', '🗑️');
+
   saveData();
   renderAll();
+
+  showToast(`"${team.teamName}" removed from active view. History preserved in Event Time Logs!`, 'info', '💾');
 }
 
 // ============================================================================
-// Rendering: Horizontal Row-Wise Rectangle List (Many Timers in One Screen)
+// Rendering: Horizontal Row-Wise Rectangle List (Active Timers)
 // ============================================================================
 function renderTimersList() {
   const list = document.getElementById('teams-list');
@@ -504,7 +570,6 @@ function renderTimersList() {
     else if (team.status === 'time_over' || timing.remainingMs < 120000) progressColorClass = 'danger';
     else if (timing.remainingMs < 300000) progressColorClass = 'warning';
 
-    // Controls setup
     let primaryBtnHtml = '';
     if (team.status === 'ready') {
       primaryBtnHtml = `
@@ -531,7 +596,6 @@ function renderTimersList() {
         </button>
       `;
     } else {
-      // Completed or Time Over
       primaryBtnHtml = `
         <button class="action-btn outline sm" onclick="resetTeamTimer('${team.id}')" title="Restart Timer">
           <i class="fa-solid fa-rotate-right"></i> Restart
@@ -587,7 +651,7 @@ function renderTimersList() {
               <button class="btn-adjust" onclick="adjustTeamDuration('${team.id}', -1)">-1m</button>
               <button class="btn-adjust" onclick="adjustTeamDuration('${team.id}', 1)">+1m</button>
             </div>
-            <button class="btn-adjust" style="color: var(--rose-danger)" onclick="deleteTeam('${team.id}')" title="Delete Team">
+            <button class="btn-adjust" style="color: var(--rose-danger)" onclick="deleteTeam('${team.id}')" title="Remove from active screen (History stays saved)">
               <i class="fa-solid fa-trash"></i>
             </button>
           </div>
@@ -641,14 +705,14 @@ function getStatusIcon(status) {
 }
 
 // ============================================================================
-// Event Time Logs (Details and Times Alone - No Scores / No Ranking)
+// Event Time Logs (Permanent History - Never Lost When Active Timers Are Deleted)
 // ============================================================================
 function renderLogs() {
   const tbody = document.getElementById('logs-tbody');
   const emptyLogs = document.getElementById('empty-logs');
   if (!tbody) return;
 
-  if (teams.length === 0) {
+  if (eventLogs.length === 0) {
     tbody.innerHTML = '';
     if (emptyLogs) emptyLogs.style.display = 'block';
     return;
@@ -656,15 +720,10 @@ function renderLogs() {
 
   if (emptyLogs) emptyLogs.style.display = 'none';
 
-  // Display all registered teams in logged order
-  tbody.innerHTML = teams.map((team, index) => {
-    const timing = getTeamTiming(team);
-    const timeTaken = team.elapsedAtStop != null ? team.elapsedAtStop : timing.elapsedMs;
-    const timeLeft = timing.remainingMs;
-
-    let statusDisplay = team.status.toUpperCase();
-    if (team.status === 'completed') statusDisplay = 'COMPLETED EARLY';
-    if (team.status === 'time_over') statusDisplay = 'TIME OVER (12M)';
+  tbody.innerHTML = eventLogs.map((log, index) => {
+    let statusDisplay = (log.status || 'RECORDED').toUpperCase();
+    if (log.status === 'completed') statusDisplay = 'COMPLETED EARLY';
+    if (log.status === 'time_over') statusDisplay = 'TIME OVER (12M)';
 
     return `
       <tr>
@@ -672,33 +731,33 @@ function renderLogs() {
           <span class="log-index-badge">${index + 1}</span>
         </td>
         <td>
-          <div class="team-cell-title">${escapeHtml(team.teamName)}</div>
+          <div class="team-cell-title">${escapeHtml(log.teamName)}</div>
         </td>
         <td>
-          <span class="participants-sub">${escapeHtml(team.participants || 'N/A')}</span>
+          <span class="participants-sub">${escapeHtml(log.participants || 'N/A')}</span>
         </td>
         <td>
-          <span class="time-cell-val">${formatDetailedDuration(timeTaken)}</span>
+          <span class="time-cell-val">${formatDetailedDuration(log.timeTakenMs)}</span>
         </td>
         <td>
-          <span class="time-cell-remaining">${formatDetailedDuration(timeLeft)}</span>
+          <span class="time-cell-remaining">${formatDetailedDuration(log.timeLeftMs)}</span>
         </td>
         <td>
-          <span style="font-size: 0.85rem; color: var(--text-dim);">${formatDetailedDuration(team.targetDurationMs)}</span>
+          <span style="font-size: 0.85rem; color: var(--text-dim);">${formatDetailedDuration(log.targetDurationMs)}</span>
         </td>
         <td>
-          <span class="status-badge ${team.status}">
+          <span class="status-badge ${log.status}">
             ${statusDisplay}
           </span>
         </td>
         <td>
           <span style="font-size: 0.8rem; color: var(--text-dim)">
-            ${team.startTime ? formatClockTime(team.startTime) : 'Not Started'}
+            ${log.startedAt ? formatClockTime(log.startedAt) : 'Not Started'}
           </span>
         </td>
         <td>
           <span style="font-size: 0.8rem; color: var(--text-dim)">
-            ${team.finishedAt ? formatClockTime(team.finishedAt) : (team.status === 'time_over' ? 'Finished (12m)' : '--')}
+            ${log.finishedAt ? formatClockTime(log.finishedAt) : (log.status === 'time_over' ? 'Finished (12m)' : '--')}
           </span>
         </td>
       </tr>
@@ -710,7 +769,7 @@ function renderLogs() {
 // Header Statistics & Live Clock
 // ============================================================================
 function updateHeaderStats() {
-  const total = teams.length;
+  const totalActive = teams.length;
   const running = teams.filter(t => t.status === 'running').length;
   const finished = teams.filter(t => t.status === 'completed' || t.status === 'time_over').length;
 
@@ -720,11 +779,11 @@ function updateHeaderStats() {
   const activeBadge = document.getElementById('active-badge');
   const logsBadge = document.getElementById('logs-badge');
 
-  if (totalElem) totalElem.textContent = total;
+  if (totalElem) totalElem.textContent = totalActive;
   if (runningElem) runningElem.textContent = running;
   if (finishedElem) finishedElem.textContent = finished;
-  if (activeBadge) activeBadge.textContent = total;
-  if (logsBadge) logsBadge.textContent = finished;
+  if (activeBadge) activeBadge.textContent = totalActive;
+  if (logsBadge) logsBadge.textContent = eventLogs.length; // Shows total permanent logs
 }
 
 function updateLiveClock() {
@@ -735,30 +794,28 @@ function updateLiveClock() {
 }
 
 // ============================================================================
-// Export Logs to CSV
+// Export Permanent History Logs to CSV
 // ============================================================================
 function exportResultsToCSV() {
-  if (teams.length === 0) {
-    showToast('No teams to export!', 'warning', '⚠️');
+  if (eventLogs.length === 0) {
+    showToast('No logged teams to export!', 'warning', '⚠️');
     return;
   }
 
   const headers = ['#', 'Team Name', 'Participants', 'Time Taken (Elapsed)', 'Time Remaining', 'Target Limit', 'Status', 'Registered At', 'Started At', 'Finished At'];
 
-  const rows = teams.map((team, idx) => {
-    const timing = getTeamTiming(team);
-    const timeTaken = team.elapsedAtStop != null ? team.elapsedAtStop : timing.elapsedMs;
+  const rows = eventLogs.map((log, idx) => {
     return [
       idx + 1,
-      `"${(team.teamName || '').replace(/"/g, '""')}"`,
-      `"${(team.participants || '').replace(/"/g, '""')}"`,
-      formatDetailedDuration(timeTaken),
-      formatDetailedDuration(timing.remainingMs),
-      formatDetailedDuration(team.targetDurationMs),
-      team.status,
-      team.createdAt ? new Date(team.createdAt).toLocaleString() : 'N/A',
-      team.startTime ? new Date(team.startTime).toLocaleString() : 'N/A',
-      team.finishedAt ? new Date(team.finishedAt).toLocaleString() : (team.status === 'time_over' ? 'Time Expired' : 'N/A')
+      `"${(log.teamName || '').replace(/"/g, '""')}"`,
+      `"${(log.participants || '').replace(/"/g, '""')}"`,
+      formatDetailedDuration(log.timeTakenMs),
+      formatDetailedDuration(log.timeLeftMs),
+      formatDetailedDuration(log.targetDurationMs),
+      log.status,
+      log.registeredAt ? new Date(log.registeredAt).toLocaleString() : 'N/A',
+      log.startedAt ? new Date(log.startedAt).toLocaleString() : 'N/A',
+      log.finishedAt ? new Date(log.finishedAt).toLocaleString() : (log.status === 'time_over' ? 'Time Expired' : 'N/A')
     ];
   });
 
@@ -768,12 +825,12 @@ function exportResultsToCSV() {
   const encodedUri = encodeURI(csvContent);
   const link = document.createElement('a');
   link.setAttribute('href', encodedUri);
-  link.setAttribute('download', `Tech_Know_Logic_Time_Logs_${new Date().toISOString().slice(0, 10)}.csv`);
+  link.setAttribute('download', `Tech_Know_Logic_Permanent_Logs_${new Date().toISOString().slice(0, 10)}.csv`);
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
 
-  showToast('Time logs exported to CSV successfully!', 'success', '📥');
+  showToast('Permanent time logs exported to CSV!', 'success', '📥');
 }
 
 // ============================================================================
@@ -790,7 +847,7 @@ function addSampleTeams() {
       startTime: Date.now() - (10 * 60 * 1000),
       pausedAt: null,
       accumulatedPausedMs: 0,
-      elapsedAtStop: 10 * 60 * 1000, // Finished at 10m 00s (2 mins before!)
+      elapsedAtStop: 10 * 60 * 1000,
       finishedAt: Date.now() - 120000,
       createdAt: Date.now() - 3600000,
       alerted: false
@@ -801,7 +858,7 @@ function addSampleTeams() {
       participants: 'Marcus Ray, Elena Rostov',
       targetDurationMs: 12 * 60 * 1000,
       status: 'running',
-      startTime: Date.now() - (5 * 60 * 1000), // Running for 5 mins
+      startTime: Date.now() - (5 * 60 * 1000),
       pausedAt: null,
       accumulatedPausedMs: 0,
       elapsedAtStop: null,
@@ -815,7 +872,7 @@ function addSampleTeams() {
       participants: 'David Kim, Sarah Jenkins',
       targetDurationMs: 12 * 60 * 1000,
       status: 'running',
-      startTime: Date.now() - (2 * 60 * 1000), // Running for 2 mins (started later!)
+      startTime: Date.now() - (2 * 60 * 1000),
       pausedAt: null,
       accumulatedPausedMs: 0,
       elapsedAtStop: null,
@@ -840,9 +897,11 @@ function addSampleTeams() {
   ];
 
   teams.push(...sampleTeams);
+  sampleTeams.forEach(t => syncTeamToPermanentLog(t));
+
   saveData();
   renderAll();
-  showToast('Added 4 sample teams with varying finish & running times!', 'success', '✨');
+  showToast('Added 4 demo teams! Try deleting one from active screen to see history stay intact.', 'success', '✨');
 }
 
 // ============================================================================
@@ -900,7 +959,7 @@ document.addEventListener('DOMContentLoaded', () => {
       saveData();
       if (settings.soundEnabled) {
         playAlarmSound();
-        setTimeout(stopAlarmSound, 1000); // Quick test of beep
+        setTimeout(stopAlarmSound, 1000);
       }
     });
   }
@@ -973,6 +1032,8 @@ document.addEventListener('DOMContentLoaded', () => {
       };
 
       teams.unshift(newTeam);
+      syncTeamToPermanentLog(newTeam); // Logged immediately into permanent history!
+
       saveData();
 
       teamNameInput.value = '';
@@ -1013,16 +1074,31 @@ document.addEventListener('DOMContentLoaded', () => {
   if (searchInput) searchInput.addEventListener('input', renderTimersList);
   if (statusFilter) statusFilter.addEventListener('change', renderTimersList);
 
-  // Clear All
+  // Clear Active Timers Only (Does NOT touch permanent logs!)
   const clearBtn = document.getElementById('clear-all-btn');
   if (clearBtn) {
     clearBtn.addEventListener('click', () => {
       if (teams.length === 0) return;
-      if (confirm('Are you sure you want to clear ALL teams and timers? This cannot be undone.')) {
+      if (confirm('Clear all timers from the Active screen?\n\nNote: All team records in the Event Time Logs will be permanently kept.')) {
+        teams.forEach(t => syncTeamToPermanentLog(t));
         teams = [];
         saveData();
         renderAll();
-        showToast('All teams cleared', 'info', '🧹');
+        showToast('Active screen cleared. Event Time Logs remain safe!', 'info', '🧹');
+      }
+    });
+  }
+
+  // Clear Permanent History Logs Button
+  const clearLogsBtn = document.getElementById('clear-logs-btn');
+  if (clearLogsBtn) {
+    clearLogsBtn.addEventListener('click', () => {
+      if (eventLogs.length === 0) return;
+      if (confirm('WARNING: Are you sure you want to permanently delete all Event Time Logs history?\nThis cannot be undone.')) {
+        eventLogs = [];
+        saveData();
+        renderAll();
+        showToast('Permanent history logs cleared', 'info', '🗑️');
       }
     });
   }
@@ -1033,7 +1109,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Export CSV
   const exportBtn = document.getElementById('export-btn');
+  const exportLogsBtn = document.getElementById('export-logs-btn');
   if (exportBtn) exportBtn.addEventListener('click', exportResultsToCSV);
+  if (exportLogsBtn) exportLogsBtn.addEventListener('click', exportResultsToCSV);
 
   // Print Logs
   const printBtn = document.getElementById('print-logs-btn');
